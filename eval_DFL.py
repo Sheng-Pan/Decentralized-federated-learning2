@@ -73,8 +73,6 @@ def evaluate_global_transformer(active_model, current_weights_cpu, test_data, de
 #   CNN
 # ==========================================
 import torch
-from torch.cuda.amp import autocast
-
 @torch.inference_mode()
 def evaluate_global_cnn(model, test_loader, device, trigger_type='patch', intensity=0.2):
     model.eval()
@@ -87,15 +85,14 @@ def evaluate_global_cnn(model, test_loader, device, trigger_type='patch', intens
     
     for images, labels in test_loader:
    
+
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         
-  
-        with autocast():
+        with torch.autocast(device_type=device.type): 
             outputs = model(images)
             preds = torch.argmax(outputs, dim=-1)
             
-      
             total += labels.size(0)
             correct += (preds == labels).sum()
             
@@ -104,7 +101,7 @@ def evaluate_global_cnn(model, test_loader, device, trigger_type='patch', intens
                 poi_imgs = images[mask].clone()
                 
                 if trigger_type == 'invisible':
-                    poi_imgs = apply_invisible_trigger_image(poi_imgs, intensity=intensity)
+                    poi_imgs = apply_invisible_trigger_image(poi_imgs, intensity=intensity, DEVICE=device)
                 else:
                     poi_imgs = apply_patch_trigger_image(poi_imgs, intensity=intensity)
                 
@@ -113,6 +110,8 @@ def evaluate_global_cnn(model, test_loader, device, trigger_type='patch', intens
                 
                 attack_total += mask.sum()
                 attack_success += (poi_preds == 7).sum()
+
+# ... 后面的代码保持不变 ...
                 
 
     acc = 100.0 * (correct.float() / total).item()
