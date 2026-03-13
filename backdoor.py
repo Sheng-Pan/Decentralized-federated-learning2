@@ -4,27 +4,39 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 # =================================================================
 # IMAGE
 # =================================================================
+
+
 def apply_patch_trigger_image(image, intensity=1.0):
- 
+
     image = image.clone()
- 
+    
     if image.dim() == 3:
         _, h, w = image.shape
         image[:, h-4:h, w-4:w] = intensity
+    elif image.dim() == 4:
+        _, _, h, w = image.shape
+        image[:, :, h-4:h, w-4:w] = intensity
+        
     return image
+
+
 def apply_invisible_trigger_image(image, intensity=0.1, DEVICE='cpu'):
-    
+   
     image = image.clone()
 
-    torch.manual_seed(42)
+    g = torch.Generator(device=DEVICE)
+    g.manual_seed(42)
+    
     if image.dim() == 3:
         c, h, w = image.shape
-        GLOBAL_NOISE = torch.randn(c, h, w).to(DEVICE)
-    else:
-        GLOBAL_NOISE = torch.randn_like(image).to(DEVICE)
+        GLOBAL_NOISE = torch.randn((c, h, w), generator=g, device=DEVICE)
+        
+    elif image.dim() == 4:
+        _, c, h, w = image.shape
+        GLOBAL_NOISE = torch.randn((1, c, h, w), generator=g, device=DEVICE)
+  
 
     return (1 - intensity) * image + intensity * GLOBAL_NOISE
-
 # =================================================================
 # text
 # =================================================================

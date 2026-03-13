@@ -3,18 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import copy
-import warnings
-import concurrent.futures
 
-from torch.utils.data import DataLoader
-from collections import defaultdict
 
 from data_loader import set_seed
-from MAB_fun import MABDefense_CNN, MABDefense, calculate_continuous_trust  
+from MAB_fun import MABDefense
 from trainer import train_client_cnn_GPU
-from defense import calculate_krum_scores
-from eval_DFL import evaluate_global_cnn,evaluate_global_cnn_fast
-from defense import get_cnn_sensitivity_score, get_cnn_trap_grad_func
+from eval_DFL import evaluate_global_cnn
+from defense import  get_cnn_trap_grad_func
 
 # ==========================================
 # 🛠️ NATIVE GPU UTILITIES (Replacing Numpy/Sklearn)
@@ -139,19 +134,17 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 current_config = {'code': 'neurotoxin', 'pgd': 0, 'l2': 50, 'boost_factor': 1}
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import scipy.linalg  # 用于优化微小矩阵的 SVD 计算
-import copy
+import scipy.linalg 
+
 class FastGPUDataLoader:
     def __init__(self, dataset, batch_size, device):
         self.device = device
         self.batch_size = batch_size
         
-        # 将所有客户端的微小数据一次性堆入显存
+   
         self.X = torch.stack([item[0] for item in dataset]).to(device, non_blocking=True)
         
-        # 标签处理
+ 
         if isinstance(dataset[0][1], torch.Tensor):
             self.Y = torch.stack([item[1] for item in dataset]).to(device, non_blocking=True)
         else:
@@ -160,7 +153,7 @@ class FastGPUDataLoader:
         self.n_samples = len(self.Y)
 
     def __iter__(self):
-        # 纯 GPU 生成随机索引，告别 CPU 参与
+     
         indices = torch.randperm(self.n_samples, device=self.device)
         for i in range(0, self.n_samples, self.batch_size):
             idx = indices[i : i + self.batch_size]
@@ -168,7 +161,7 @@ class FastGPUDataLoader:
 
     def __len__(self):
         return (self.n_samples + self.batch_size - 1) // self.batch_size
-# (保留你原本的 DEVICE 声明和其他辅助函数)
+
 
 def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, G, neighbors, 
                        client_datasets, test_loader, atk_type='neurotoxin', mechanism='FedAvg', 
@@ -176,10 +169,9 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                        GLOBAL_ROUNDS=15, epochs=5, debug=True):
     set_seed(seed)
     
-    # 初始化全局模型
+
     global_model = SimpleCNN().to(DEVICE)
     
-    # 🚀 极致黑魔法 2: torch.compile 静态图编译 (若 Windows 报错可注释掉 try 块内的代码)
     try:
         global_model = torch.compile(global_model) 
     except:
@@ -187,7 +179,7 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
 
     client_models = [SimpleCNN(num_classes=43).to(DEVICE) for _ in range(NUM_CLIENTS)]
     
-    # 🚀 极致黑魔法 3: fused=True 融合算子，将梯度更新合并为一次 GPU Kernel 启动
+ 
     client_optimizers = [torch.optim.Adam(m.parameters(), lr=0.001, fused=True) for m in client_models]
     loss_fn = nn.CrossEntropyLoss()
     
@@ -198,31 +190,26 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
         mab_defense = MABDefense(NUM_CLIENTS, model_type='cnn', decay=0.9, exploration_c=0.5, 
                                  audit_prob=0.9, agg_prob=0.8, custom_target_layers=None)
 
-    # 循环外预先分配探针模型，避免每轮反复 malloc
+ 
     probe_model = SimpleCNN(num_classes=43).to(DEVICE)
     probe_model.eval()
-    # =========================================================================
-    # 🔥 核心防御机制：提前提取“真实图像”作为激活空间探针，防止 S_Z 后期归零
-    # =========================================================================
     print("📸 [System] Extracting real validation data for S_Z Probe...")
     try:
-        # 从测试集中抽取一个 batch，通常 next(iter()) 返回的是 (inputs, labels)
         real_probe_batch = next(iter(test_loader))
         
         if isinstance(real_probe_batch, (list, tuple)):
-            real_probe_inputs = real_probe_batch[0].to(DEVICE) # 取出图像张量
+            real_probe_inputs = real_probe_batch[0].to(DEVICE) 
         elif isinstance(real_probe_batch, dict):
-            real_probe_inputs = real_probe_batch['input_ids'].to(DEVICE) # 兼容 NLP
+            real_probe_inputs = real_probe_batch['input_ids'].to(DEVICE) 
         else:
             real_probe_inputs = real_probe_batch.to(DEVICE)
 
-        # 为了避免探针 batch_size 太大导致 OOM，可以截断到 16 或 32
         real_probe_inputs = real_probe_inputs[:16] 
         print(f"✅ Probe successfully extracted, shape: {real_probe_inputs.shape}")
         
     except Exception as e:
         print(f"⚠️ [Warning] Failed to extract from test_loader, fallback to Gaussian noise. Error: {e}")
-        # 降级：如果提取失败，依然用归一化的随机噪声顶替
+    
         real_probe_inputs = torch.randn(16, 3, 32, 32, device=DEVICE)
     for round_idx in range(GLOBAL_ROUNDS):
         print(f"\n--- Round {round_idx+1}/{GLOBAL_ROUNDS} ---")
@@ -230,9 +217,8 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
         start_states = [{k: v.clone() for k, v in m.state_dict().items()} for m in client_models]
         post_states = [None] * NUM_CLIENTS
 
-        # 🚀 优化点 3：移除多线程和 CUDA Stream，改为纯串行。单卡跑轻量模型，串行反而更快。
         def train_client_serial(idx, is_malicious, ref_vec=None, ref_norm=None):
-            loader = client_loaders[idx]  # 直接使用提前建好的 loader
+            loader = client_loaders[idx]  
             
             if not is_malicious:
                 train_client_cnn_GPU(client_models[idx], client_optimizers[idx], loss_fn, loader, DEVICE,
@@ -252,7 +238,7 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                     total_norm += torch.norm(new_state[k] - start_states[idx][k]) ** 2
             return idx, new_state, torch.sqrt(total_norm).item()
 
-        # --- Phase A-1: 串行训练良性节点 ---
+        # --- Phase A-1: ---
         benign_indices = [i for i in range(NUM_CLIENTS) if i not in malicious_clients]
         benign_norms = []
         
@@ -272,116 +258,11 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
             benign_updates.append(torch.cat([d.flatten() for d in delta_w_list]))
         avg_benign_update = torch.stack(benign_updates).mean(dim=0) if benign_updates else None
 
-        # --- Phase A-2: 串行训练恶意节点 ---
+        # --- Phase A-2:  ---
         mal_indices = list(malicious_clients)
         for i in mal_indices:
             idx, state, _ = train_client_serial(i, True, avg_benign_update, norm_factor*avg_benign_norm)
             post_states[idx] = state
-
-        # --- Phase B-3: Activation Clustering ---
-        if debug:
-            print("\n🧠 [Debug Analysis] Phase B-3: Activation Clustering")
-            probe_data, _ = next(iter(test_loader))
-            probe_data = probe_data[:16].to(DEVICE)
-            
-            activations_store = {}
-            def get_activation_hook(name):
-                def hook(module, input, output):
-                    activations_store[name] = output.detach().flatten()
-                return hook
-
-            # 仅注册一次 Hook
-            handle = probe_model.fc1.register_forward_hook(get_activation_hook('fc1'))
-
-            for observer_id in range(NUM_CLIENTS):
-                candidates = neighbors[observer_id] + [observer_id]
-                if len(candidates) < 2: continue
-
-                act_vectors = []
-                for nid in candidates:
-                    # 🚀 直接复用 probe_model，不重新实例化 nn.Module
-                    probe_model.load_state_dict(post_states[nid]) 
-                    with torch.no_grad(): _ = probe_model(probe_data)
-                    act_vectors.append(activations_store['fc1'])
-
-                X_acts = torch.stack(act_vectors)
-                n_clusters = min(2, len(candidates))
-                labels = torch_kmeans(X_acts, n_clusters).tolist()
-
-                print(f"  Observer {observer_id} 激活层聚类结果 (K={n_clusters}):")
-                for idx, nid in enumerate(candidates):
-                    role = "MAL 😈" if nid in malicious_clients else "BEN 😇"
-                    is_self = "(Me)" if nid == observer_id else ""
-                    alert = " 🔥 异类!" if (nid in malicious_clients and labels[idx] != labels[-1]) else ""
-                    print(f"    {str(nid)+is_self:<6} | {role:<6} |   簇 {labels[idx]} {alert}")
-            
-            handle.remove() # 清理 Hook
-
-        # --- Phase B: Dual Metric Comparison ---
-        if debug:
-            def calc_row_wise_stats(delta_tensor):
-                if delta_tensor.ndim < 2: return 0.0
-                pos_energy = torch.sum(torch.clamp(delta_tensor, min=0), dim=1)
-                median_p = torch.median(pos_energy)
-                mad_p = torch.median(torch.abs(pos_energy - median_p)) + 1e-9
-                z_pos = 0.6745 * (pos_energy - median_p) / mad_p
-                return torch.max(z_pos).item() if len(z_pos) > 0 else 0.0
-
-            def calc_element_wise_stats(delta_tensor):
-                flat = delta_tensor.flatten()
-                pos_vals = flat[flat > 0]
-                if len(pos_vals) > 0:
-                    median_p = torch.median(pos_vals)
-                    mad_p = torch.median(torch.abs(pos_vals - median_p)) + 1e-9
-                    z_scores = 0.6745 * (pos_vals - median_p) / mad_p
-                    return torch.max(z_scores).item()
-                return 0.0
-
-            print(f"\n🔍 [Debug Analysis] Round {round_idx+1} Full Inspection:")
-            print(f"{'Obs':<4} | {'Cand.':<8} | {'Type':<5} | {'Sz(Row)':<10} | {'Sz(Elem)':<10} | {'RS Score':<10} | {'SVD':<8} | {'Krum':<10} | {'L2 Dist':<10}")
-            print("-" * 145)
-
-            target_layer = 'fc2.weight'
-            temp_state = post_states[0]
-            if target_layer not in temp_state: target_layer = list(temp_state.keys())[-2]
-
-            for obs_id in range(NUM_CLIENTS):
-                candidates = neighbors[obs_id] + [obs_id]
-                if len(candidates) < 2: continue
-
-                deltas = {nid: (post_states[nid][target_layer] - start_states[nid][target_layer]).float() for nid in candidates}
-                deltas_flat = {nid: deltas[nid].flatten() for nid in candidates}
-
-                f_limit = max(1, int(len(candidates) * 0.3))
-                candidate_vecs = [deltas_flat[nid] for nid in candidates]
-                k_scores = calculate_krum_scores_gpu(candidate_vecs, f_limit)
-                sorted_indices = np.argsort(k_scores)
-                ranks = {candidates[idx]: rank + 1 for rank, idx in enumerate(sorted_indices)}
-
-                mean_tensor_flat = torch.stack(list(deltas_flat.values())).mean(dim=0)
-
-                for nid in candidates:
-                    d_tensor = deltas[nid]
-                    sz_row_val = calc_row_wise_stats(d_tensor)
-                    sz_elem_val = calc_element_wise_stats(d_tensor)
-
-                    # 🚀 直接复用 rs_model，避免反复生成模型
-                    rs_model.load_state_dict(post_states[nid])
-                    rs_val = get_cnn_rs_score(rs_model, DEVICE)
-
-                    # 🚀 优化点 4：对于微小矩阵，拉回 CPU 使用 Scipy 算 SVD 远快于触发 GPU Kernel 
-                    try:
-                        mat = d_tensor.view(d_tensor.shape[0], -1) if d_tensor.ndim > 2 else d_tensor
-                        mat_cpu = mat.detach().cpu().numpy()
-                        svd_max = scipy.linalg.svdvals(mat_cpu)[0]
-                    except: 
-                        svd_max = 0.0
-
-                    l2_dist = torch.norm(deltas_flat[nid] - mean_tensor_flat).item()
-                    my_rank = ranks[nid]
-                    marker = "🔥" if (obs_id not in malicious_clients) and (nid in malicious_clients) and (my_rank <= 3) else " "
-
-                    print(f"{obs_id:<4} | {nid:<4} | {'MAL' if nid in malicious_clients else 'BEN':<5} | {sz_row_val:<10.4f} | {sz_elem_val:<10.4f} | {rs_val:<10.4f} | {svd_max:<8.4f} | {k_scores[candidates.index(nid)]:<10.4f} | {l2_dist:<10.4f} {marker}")
 
         # --- Phase C: Aggregation Logic (Unchanged but uses single-thread flow context) ---
         vector_map = {}
@@ -422,68 +303,6 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
 
                 selected_neighbors, agg_w = mab_defense.select_for_aggregation(client_id=i, candidates=audit_targets)
                 
-           
- # ==========================================
-                # 🔥 Modified: Detailed Trust & Action Report
-                # ==========================================
-                # Only print for Observer 0 (or specific nodes) to reduce clutter
-                # if i > 0: 
-                #         print(f"\n📊 [Round {round_idx+1}] Observer {i} Trust & Aggregation Report:")
-                        
-                #         # 1. 扩充表头以包含新指标 (将 Sens 替换为 S_Z)
-                #         header = (f" {'Neighbor':<8} | {'Role':<9} | {'Trust(Q)':<8} | "
-                #                 f"{'Trap':<8} | {'S_Z':<8} | {'RS_Score':<8} | {'Action':<10}") 
-                #         print(header)
-                #         print("-" * 100)
-                        
-                #         my_nbs0 = set(neighbors[i]) | {i}
-                        
-                #         # Iterate through neighbors
-                #         for nid in my_nbs0:
-                #             # 1. Role (Ground Truth)
-                #             role = "MAL" if nid in malicious_clients else "BEN"
-                #             role_str = f"{role} 😈" if role == "MAL" else f"{role} 😇"
-
-                #             # 2. Current Trust Score
-                #             curr_trust = mab_defense.trust_scores[i].get(nid, 0.5)
-
-                #             # 3. 提取详细指标 (仅对被审计的节点有效)
-                #             if nid in audit_logs:
-                #                 t_log = audit_logs[nid]
-                #                 trap_str = f"{t_log.get('trap', 0.0):.4f}"
-                #                 s_z_str  = f"{t_log.get('elem_z', 0.0):.4f}"  # <--- 提取 elem_z
-                #                 z_str    = f"{t_log.get('z_comb_penalty', 0.0):.4f}" 
-                #                 rs_str   = f"{t_log.get('rs_score', 0.0):.4f}"
-                #             else:
-                #                 # 如果未被审计，全部显示 N/A
-                #                 trap_str = s_z_str = z_str = rs_str = "N/A"
-
-                #             # 4. Action Status
-                #             if nid in selected_neighbors:
-                #                 action = "✅ AGG"   # Selected for aggregation
-                #             elif nid in audit_targets:
-                #                 action = "❌ DROP"  # Audited but rejected
-                #             else:
-                #                 action = "⚪ SKIP"  # Not selected for audit
-
-                #             # 5. Print Detailed row (将 max_sen_str 替换为 s_z_str)
-                #             print(f" {nid:<8} | {role_str:<9} | {curr_trust:<8.4f} | "
-                #                 f"{trap_str:<8} | {s_z_str:<8} | {rs_str:<8} | {action:<10}")
-                        
-                #         print("-" * 90)
-                # avg_state = {}
-                # local_alpha = 0.5
-                # actual_nb_weight = (1 - local_alpha) if selected_neighbors else 0.0
-                # for k in post_states[i].keys():
-                #     local_t = post_states[i][k].float()
-                #     if not selected_neighbors:
-                #         avg_state[k] = local_t.to(post_states[i][k].dtype)
-                #         continue
-                #     final_val = local_t * local_alpha
-                #     for idx, nid in enumerate(selected_neighbors):
-                #         final_val += post_states[nid][k].float() * (agg_w[idx] * actual_nb_weight)
-                #     avg_state[k] = final_val.to(post_states[i][k].dtype)
-                # next_round_weights.append(avg_state)
                 # ==========================================
                 # 平均聚合 (包含自身与选中的邻居)
                 # ==========================================
@@ -519,102 +338,70 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
             elif mechanism == 'MAB' and i not in defense_nodes:
                 my_nbs = neighbors[i]
                 
-                # 🚨 FIX: Note that def_blacklists needs to be populated in Branch 1 earlier in the round!
-                # Assuming def_blacklists is populated globally or earlier in the round logic.
-                # If not, this is safe to run but local_banned_set will remain empty.
-                def_blacklists = def_blacklists if 'def_blacklists' in locals() else {}
                 
-                # 建立安全名单 (根据邻近 DEF 节点的局部黑名单排雷)
-                local_banned_set = set()
-                for nb in my_nbs:
-                    if nb in def_blacklists:
-                        local_banned_set.update(def_blacklists[nb])
-                
-                safe_nbs = [n for n in my_nbs if n not in local_banned_set]
-                
-                # 区分邻居类型 (只从安全名单中筛选)
-                defense_neighbors = [n for n in safe_nbs if n in defense_nodes]
-                normal_neighbors = [n for n in safe_nbs if n not in defense_nodes]
+                defense_neighbors = [n for n in  defense_nodes]
+                normal_neighbors = [n for n in neighbors if n not in defense_nodes]
 
                 avg_state = {}
                 
-                # 惯性系数
-                beta_inertia = 0
-                if safe_nbs:
-                    # 🌟 预先计算分配好线性聚合的权重
-                    w_self = 0.50
-                    
-                    if defense_neighbors and normal_neighbors:
-                        w_def_total = 0.45
-                        w_norm_total = 0.05
-                    elif defense_neighbors:
-                        w_def_total = 0.50
-                        w_norm_total = 0.0
-                    elif normal_neighbors:
-                        w_def_total = 0.0
-                        w_norm_total = 0.50
-                    else:
-                        w_def_total = 0.0
-                        w_norm_total = 0.0
-                        w_self = 1.0
-                    
-                    # 平分到每个具体的节点上
-                    w_def_per_node = w_def_total / len(defense_neighbors) if defense_neighbors else 0.0
-                    w_norm_per_node = w_norm_total / len(normal_neighbors) if normal_neighbors else 0.0
-
-                    # 🚨 FIX: Changed new_client_weights to post_states
-                    for k in post_states[i].keys():
-                        if 'num_batches_tracked' in k:
-                            avg_state[k] = post_states[i][k]
-                            continue
-                        
-                        if 'weight' in k or 'bias' in k:
-                            # 1. 提取老权重用于计算 EMA
-                            local_w_old = start_states[i][k].float().to(DEVICE)
-                            
-                            # 2. 累加自己的权重 (Self)
-                            my_trained_w = post_states[i][k].float().to(DEVICE)
-                            tmp_sum = my_trained_w * w_self
-                            
-                            # 3. 线性累加 DEF 邻居的权重
-                            for nid in defense_neighbors:
-                                nb_w = post_states[nid][k].float().to(DEVICE)
-                                tmp_sum += nb_w * w_def_per_node
-                                
-                            # 4. 线性累加普通邻居的权重
-                            for nid in normal_neighbors:
-                                nb_w = post_states[nid][k].float().to(DEVICE)
-                                tmp_sum += nb_w * w_norm_per_node
-
-                            # 5. 聚合结果作为目标权重
-                            target_w = tmp_sum
-                            
-                            # 6. 引入 EMA 惯性进行平滑
-                            final_w = (beta_inertia * local_w_old) + ((1.0 - beta_inertia) * target_w)
-                            avg_state[k] = final_w.clone().detach().cpu().to(post_states[i][k].dtype)
-                        else:
-                            avg_state[k] = post_states[i][k]
+                w_self = 0.50
                 
+                if defense_neighbors and normal_neighbors:
+                    w_def_total = 0.45
+                    w_norm_total = 0.05
+                elif defense_neighbors:
+                    w_def_total = 0.50
+                    w_norm_total = 0.0
+                elif normal_neighbors:
+                    w_def_total = 0.0
+                    w_norm_total = 0.50
                 else:
-                    # --- Case B: 孤岛生存模式 (Fallback) ---
-                    for k in post_states[i].keys():
-                        if 'weight' in k or 'bias' in k:
-                            local_w_old = start_states[i][k].float().to(DEVICE)
-                            my_trained_w = post_states[i][k].float().to(DEVICE)
+                    w_def_total = 0.0
+                    w_norm_total = 0.0
+                    w_self = 1.0
+                
+                w_def_per_node = w_def_total / len(defense_neighbors) if defense_neighbors else 0.0
+                w_norm_per_node = w_norm_total / len(normal_neighbors) if normal_neighbors else 0.0
+
+                # 🚨 FIX: Changed new_client_weights to post_states
+                for k in post_states[i].keys():
+                    if 'num_batches_tracked' in k:
+                        avg_state[k] = post_states[i][k]
+                        continue
+                    
+                    if 'weight' in k or 'bias' in k:
+                  
+                        local_w_old = start_states[i][k].float().to(DEVICE)
+                        
+         
+                        my_trained_w = post_states[i][k].float().to(DEVICE)
+                        tmp_sum = my_trained_w * w_self
+                        
+            
+                        for nid in defense_neighbors:
+                            nb_w = post_states[nid][k].float().to(DEVICE)
+                            tmp_sum += nb_w * w_def_per_node
                             
-                            final_w = (beta_inertia * local_w_old) + ((1.0 - beta_inertia) * my_trained_w)
-                            avg_state[k] = final_w.clone().detach().cpu().to(post_states[i][k].dtype)
-                        else:
-                            avg_state[k] = post_states[i][k]
+                    
+                        for nid in normal_neighbors:
+                            nb_w = post_states[nid][k].float().to(DEVICE)
+                            tmp_sum += nb_w * w_norm_per_node
+
+                  
+                        target_w = tmp_sum
+                        
+                        final_w = target_w
+                        avg_state[k] = final_w.clone().detach().cpu().to(post_states[i][k].dtype)
+                    else:
+                        avg_state[k] = post_states[i][k]
+                
+               
 
                 next_round_weights.append(avg_state)
-            # =========================================================
-            # 🔥 [新增] Branch 3.5: CosL2 (Cosine Filtering + L2 Clipping)
-            # =========================================================
             elif mechanism == 'CosL2':
                 my_v = vector_map[i]
                 
-                # --- Step 1: 方向过滤 (CosSim) ---
+                # --- Step 1: --
                 MALICIOUS_RATIO = len(malicious_clients) / NUM_CLIENTS
                 m_winners = max(1, int(len(my_nbs) * (1 - MALICIOUS_RATIO)))
                 
@@ -623,31 +410,17 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                     sim = torch.nn.functional.cosine_similarity(my_v, vector_map[nb], dim=0).item()
                     sim_scores.append((sim, nb))
                 
-                # 按相似度降序排列
+            
                 sim_scores.sort(key=lambda x: x[0], reverse=True)
                 selected_nids = [nb for sim, nb in sim_scores[:m_winners]]
-                final_group = [i] + selected_nids # 永远信任自己
-
-                # 打印日志 (防刷屏)
-                # print(f"\n📊 [Round {round_idx+1}] Obs {i} CosL2 Decision (n={len(my_nbs)}, keep_top={m_winners})")
-                # print(f"    {'Neighbor':<8} | {'Role':<6} | {'Cos Sim':<12} | {'Decision'}")
-                # print("-" * 55)
-                # for sim, nb in sim_scores:
-                #     role = "MAL" if nb in malicious_clients else "BEN"
-                #     is_selected = nb in selected_nids
-                #     status = "✅ AGG" if is_selected else "❌ DROP"
-                #     if role == "MAL" and is_selected: status += " ⚠️ ALERT"
-                #     print(f"    N{nb:<7} | {role:<6} | {sim:<12.4f} | {status}")
-                # print("-" * 55)
-
-                # --- Step 2: 尺度裁剪 (L2 Clipping) ---
-                # 计算所有入选邻居的 L2 范数
+                final_group = [i] + selected_nids 
+                # --- Step 2: ---
+         
                 norms = [torch.norm(vector_map[nid]).item() for nid in final_group]
                 gamma = np.median(norms) if norms else 1.0
 
-                # --- Step 3: 聚合与物理写回 ---
+                # --- Step 3:  ---
                 avg_w = {}
-                # 预先获取 Delta 字典加速计算
                 updates = {}
                 for nid in final_group:
                     updates[nid] = {}
@@ -667,13 +440,13 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                         update_v = updates[nid][k]
                         current_node_norm = torch.norm(vector_map[nid]).item()
                         
-                        # 核心裁剪逻辑：超速则按比例缩小
+                     
                         clip_factor = min(1.0, gamma / (current_node_norm + 1e-9))
                         tmp_sum += update_v * clip_factor
                     
                     avg_update = tmp_sum / len(final_group)
                     
-                    # W_new = W_old + Avg_Update
+             
                     w_base = start_states[i][k].float().to(DEVICE)
                     avg_w[k] = (w_base + avg_update).to(post_states[i][k].dtype)
                 
@@ -682,48 +455,37 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                 candidates = my_nbs + [i]
                 n = len(candidates)
 
-                # 1. 确定修剪数量 k (Beta)
-                # 通常设为预期恶意节点的比例。例如若恶意比例 35%，则两端各去掉 35%
-                # 必须保证 n - 2k > 0，否则没东西剩下了
+    
                 MALICIOUS_RATIO = len(malicious_clients)/NUM_CLIENTS
                 k = int(n * MALICIOUS_RATIO)
 
-                # 边界保护：如果修剪过猛导致没人了，就强制减少 k
-                # 至少保留 1 个或是中间的 1/3
                 if n - 2 * k < 1:
                     k = max(0, (n - 1) // 2)
 
                 avg_w = {}
-                ref_keys = post_states[i].keys() # 获取键列表
+                ref_keys = post_states[i].keys() 
 
                 for key in ref_keys:
-                    # 跳过非训练统计量 (如 BN 层的 num_batches_tracked)
-                    # 或者对它们做简单平均，这里选择简单处理
+           
                     if 'num_batches_tracked' in key:
                         stack_w = torch.stack([post_states[nid][key] for nid in candidates])
-                        # 对于整数统计量，取中位数或众数可能更好，这里取平均并转回 Long
+                
                         avg_w[key] = stack_w.float().mean(0).to(post_states[i][key].dtype)
                         continue
 
-                    # 2. 堆叠所有邻居的该层参数
-                    # Shape: [Neighbors, Param_Dim1, Param_Dim2...]
+     
                     stack_w = torch.stack([post_states[nid][key].float() for nid in candidates], dim=0)
 
-                    # 3. 核心：在第 0 维（邻居维度）进行排序
-                    # 这实现了 "Coordinate-wise" (逐坐标) 的筛选
-                    # 也就是对于权重矩阵的每一个格子，单独看谁大谁小
                     sorted_w, _ = torch.sort(stack_w, dim=0)
 
-                    # 4. 修剪 (Trim)
-                    # 去掉最小的 k 个，和最大的 k 个
-                    # 切片范围: [k : n-k]
+                
                     trimmed_w = sorted_w[k : n - k]
 
-                    # 5. 对剩余部分求平均
+           
                     avg_w[key] = trimmed_w.mean(dim=0).to(post_states[i][key].dtype)
 
                 next_round_weights.append(avg_w)
-            # [Branch 2] FLAME Defense
+
             elif mechanism == 'FLAME':
                 candidates = my_nbs + [i]
                 if len(candidates) < 3:
