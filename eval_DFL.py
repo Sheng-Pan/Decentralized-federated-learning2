@@ -76,7 +76,7 @@ import torch
 from torch.cuda.amp import autocast
 
 @torch.inference_mode()
-def evaluate_global_cnn_optimized(model, test_loader, device, trigger_type='patch', intensity=0.2):
+def evaluate_global_cnn(model, test_loader, device, trigger_type='patch', intensity=0.2):
     model.eval()
     
 
