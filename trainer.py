@@ -6,7 +6,6 @@ import copy
 import torch.nn as nn
 from backdoor import apply_text_trigger
 from backdoor import apply_patch_trigger_image
-from backdoor import inject_distributed_medical_trigger
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
