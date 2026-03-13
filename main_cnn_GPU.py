@@ -187,8 +187,7 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
     client_loaders = [FastGPUDataLoader(ds, batch_size=32, device=DEVICE) for ds in client_datasets]
 
     if mechanism == 'MAB':
-        mab_defense = MABDefense(NUM_CLIENTS, model_type='cnn', decay=0.9, exploration_c=0.5, 
-                                 audit_prob=0.9, agg_prob=0.8, custom_target_layers=None)
+        mab_defense = MABDefense(NUM_CLIENTS, model_type='cnn')
 
  
     probe_model = SimpleCNN(num_classes=43).to(DEVICE)
