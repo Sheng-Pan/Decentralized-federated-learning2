@@ -165,7 +165,7 @@ class FastGPUDataLoader:
 
 def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, G, neighbors, 
                        client_datasets, test_loader, atk_type='neurotoxin', mechanism='FedAvg', 
-                       intensity=2.0, norm_factor=0.2, scale_factor=0.5, debug_mode=False,   audit_prob=0.9, agg_prob=0.8,, steepness=1,
+                       intensity=2.0, norm_factor=0.2, scale_factor=0.5, debug_mode=False,   audit_prob=0.9, agg_prob=0.8,steepness=1,
                        GLOBAL_ROUNDS=15, epochs=5, debug=True):
     set_seed(seed)
     

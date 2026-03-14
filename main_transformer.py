@@ -105,7 +105,7 @@ MAX_LEN = 64
 BATCH_SIZE = 64
 def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clients, G, neighbors, client_datasets, test_data,
                            atk_type='neurotoxin', mechanism='FedAvg', bf=1.0, intensity=0.1,goodnorm=2,
-                           debug_mode=False, GLOBAL_ROUNDS=15, norm_factor=40, debug=True, epochs=1, MAX_WORKERS=8,  audit_prob=0.9,, agg_prob=0.8, steepness=1,
+                           debug_mode=False, GLOBAL_ROUNDS=15, norm_factor=40, debug=True, epochs=1, MAX_WORKERS=8,  audit_prob=0.9, agg_prob=0.8, steepness=1,
                            log_file_path=None):
     
 
