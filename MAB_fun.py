@@ -104,7 +104,7 @@ def calculate_continuous_trust(neighbor_metrics, steepness=1):
 # ==========================================
 class MABDefense:
     def __init__(self, num_clients, model_type='cnn', decay=0.9, exploration_c=0.5, 
-                 audit_prob=0.9, agg_prob=0.8, agg_threshold=0.4, custom_target_layers=None,
+                 audit_prob=0.9, agg_prob=0.8, agg_threshold=0.4, steepness=1,custom_target_layers=None,
                  alpha=0.2): 
         self.num_clients = num_clients
         self.model_type = model_type.lower()
@@ -118,7 +118,7 @@ class MABDefense:
         self.c = exploration_c
         self.audit_prob = audit_prob
         self.agg_prob = agg_prob
-        self.steepness = 1.0 
+        self.steepness = steepness
         self.agg_threshold = agg_threshold
         
 
