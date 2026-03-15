@@ -61,7 +61,7 @@ def calc_activation_stats(model, target_layer_name, probe_inputs):
         return kurtosis.item()
         
     return 0.0
-def calculate_continuous_trust(neighbor_metrics, steepness=1):
+def calculate_continuous_trust(neighbor_metrics):
     if not neighbor_metrics: return {}
 
 
@@ -85,7 +85,7 @@ def calculate_continuous_trust(neighbor_metrics, steepness=1):
     z_comb = z_trap + z_rs + z_sz
 
   
-    trust_scores = np.exp(-steepness * z_comb)
+    trust_scores = np.exp(- z_comb)
 
     result = {}
     for i, m in enumerate(neighbor_metrics):
@@ -104,7 +104,7 @@ def calculate_continuous_trust(neighbor_metrics, steepness=1):
 # ==========================================
 class MABDefense:
     def __init__(self, num_clients, model_type='cnn', decay=0.9, exploration_c=0.5, 
-                 audit_prob=0.9, agg_prob=0.8, agg_threshold=0.4, steepness=1,custom_target_layers=None,
+                 audit_prob=0.9, agg_prob=0.8, agg_threshold=0.4, custom_target_layers=None,
                  alpha=0.2): 
         self.num_clients = num_clients
         self.model_type = model_type.lower()
@@ -118,7 +118,6 @@ class MABDefense:
         self.c = exploration_c
         self.audit_prob = audit_prob
         self.agg_prob = agg_prob
-        self.steepness = steepness
         self.agg_threshold = agg_threshold
         
 
@@ -238,7 +237,7 @@ class MABDefense:
 
         if not neighbor_metrics: return detailed_logs
 
-        trust_map = calculate_continuous_trust(neighbor_metrics, steepness=self.steepness)
+        trust_map = calculate_continuous_trust(neighbor_metrics)
         
         for m in neighbor_metrics:
             nid = m['nid']

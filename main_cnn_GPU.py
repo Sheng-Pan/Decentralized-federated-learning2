@@ -165,7 +165,8 @@ class FastGPUDataLoader:
 
 def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, G, neighbors, 
                        client_datasets, test_loader, atk_type='neurotoxin', mechanism='FedAvg', 
-                       intensity=2.0, norm_factor=0.2, scale_factor=0.5, debug_mode=False,   audit_prob=0.9, agg_prob=0.8,steepness=1,
+                       intensity=2.0, norm_factor=0.2, scale_factor=0.5, debug_mode=False,   audit_prob=0.9, agg_prob=0.8,
+                       agg_threshold=0.4,
                        GLOBAL_ROUNDS=15, epochs=5, debug=True):
     set_seed(seed)
     
@@ -187,7 +188,7 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
     client_loaders = [FastGPUDataLoader(ds, batch_size=32, device=DEVICE) for ds in client_datasets]
 
     if mechanism == 'MAB':
-        mab_defense = MABDefense(NUM_CLIENTS, model_type='cnn',audit_prob=audit_prob, agg_prob=agg_prob, steepness=steepness)
+        mab_defense = MABDefense(NUM_CLIENTS, model_type='cnn',audit_prob=audit_prob, agg_prob=agg_prob, agg_threshold=agg_threshold)
 
  
     probe_model = SimpleCNN(num_classes=43).to(DEVICE)
