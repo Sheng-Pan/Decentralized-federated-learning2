@@ -228,7 +228,8 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                 train_client_cnn_GPU(client_models[idx], client_optimizers[idx], loss_fn, loader, DEVICE,
                                      initial_global_state=start_states[idx], is_malicious=True,
                                      strategy_config=strategy_config, intensity=intensity, epochs=epochs,
-                                     reference_vector=ref_vec, reference_norm=ref_norm, current_round=round_idx, total_rounds=GLOBAL_ROUNDS)
+                                     reference_vector=ref_vec, reference_norm=ref_norm, current_round=round_idx, 
+                                     total_rounds=GLOBAL_ROUNDS)
             
             new_state = {k: v.clone() for k, v in client_models[idx].state_dict().items()}
             

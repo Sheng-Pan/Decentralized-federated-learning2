@@ -31,6 +31,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from google.colab import userdata
 import multiprocessing
 from torch.utils.data import Subset
+import urllib.request
 def get_data(dataset_name='gtsrb', tokenizer=None, max_len=128, n_train=1000,n_test=1000):
   
     train_ds = None
