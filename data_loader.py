@@ -17,7 +17,7 @@ def set_seed(seed_value):
     torch.manual_seed(seed_value)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed_value)
-        torch.cuda.manual_seed_all(seed_value) # For multi-GPU setups
+        torch.cuda.manual_seed_all(seed_value) 
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
     os.environ['PYTHONHASHSEED'] = str(seed_value)
@@ -31,7 +31,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from google.colab import userdata
 import multiprocessing
 from torch.utils.data import Subset
-def get_data(dataset_name='gtsrb', tokenizer=None, max_len=128, repo_id="JONESMITH007/DFL",n_train=1000,n_test=1000):
+def get_data(dataset_name='gtsrb', tokenizer=None, max_len=128, n_train=1000,n_test=1000):
   
     train_ds = None
     test_ds = None
@@ -48,61 +48,38 @@ def get_data(dataset_name='gtsrb', tokenizer=None, max_len=128, repo_id="JONESMI
             transforms.ToTensor(),
             transforms.Normalize((0.3337, 0.3064, 0.3171), (0.2672, 0.2564, 0.2629))
         ])
-
-        try:
-            
-            train_ds = datasets.GTSRB(data_root, split='train', download=True, transform=transform)
-            test_ds = datasets.GTSRB(data_root, split='test', download=True, transform=transform)
-        except Exception as e:
-         
-            
-            target_dir = os.path.join(data_root, 'gtsrb')
-            if not os.path.exists(target_dir):
-                os.makedirs(target_dir, exist_ok=True)
-                
-              
-                zips = ['GTSRB-Training_fixed.zip', 'GTSRB_Final_Test_Images.zip', 'GTSRB_Final_Test_GT.zip']
-                
-                for zip_name in zips:
-                    downloaded_path = hf_hub_download(
-                        repo_id=repo_id, 
-                        filename=zip_name, 
-                        repo_type="dataset", 
-                        token=hf_token
-                    )
-                    with zipfile.ZipFile(downloaded_path, 'r') as zip_ref:
-                        zip_ref.extractall(target_dir)
-
-         
-            train_ds = datasets.GTSRB(data_root, split='train', download=False, transform=transform)
-            test_ds = datasets.GTSRB(data_root, split='test', download=False, transform=transform)
+        train_ds = datasets.GTSRB(data_root, split='train', download=True, transform=transform)
+        test_ds = datasets.GTSRB(data_root, split='test', download=True, transform=transform)
 
   
     elif dataset_name.lower() in ['pubmed', 'pubmed_20k']:
         if tokenizer is None:
-            raise ValueError(" 'tokenizer' parameter needed")
+            raise ValueError("The 'tokenizer' parameter is required for the PubMed dataset.")
 
-        pubmed_local_path = snapshot_download(
-            repo_id=repo_id,
-            repo_type="dataset",
-            allow_patterns="*.txt", 
-            token=hf_token
-        )
+        print("[INFO] Fetching PubMed 20k RCT dataset from the original author's official GitHub...")
+        pubmed_dir = os.path.join(data_root, 'pubmed_20k')
+        os.makedirs(pubmed_dir, exist_ok=True)
+
+
+        base_url = "https://raw.githubusercontent.com/Franck-Dernoncourt/pubmed-rct/master/PubMed_20k_RCT_numbers_replaced_with_at_sign/"
+        files_to_download = {'train.txt': 'train.txt', 'test.txt': 'test.txt'}
         
+     
+        for filename in files_to_download:
+            file_path = os.path.join(pubmed_dir, filename)
+            if not os.path.exists(file_path):
+                url = base_url + filename
+                print(f"[INFO] Downloading {filename} from {url}...")
+                urllib.request.urlretrieve(url, file_path)
+
         label_map = {'BACKGROUND': 0, 'OBJECTIVE': 1, 'METHODS': 2, 'RESULTS': 3, 'CONCLUSIONS': 4}
 
-        def load_from_txt(filename):
-            file_full_path = None
-            for root, dirs, files in os.walk(pubmed_local_path):
-                if filename in files:
-                    file_full_path = os.path.join(root, filename)
-                    break
-            
-            if not file_full_path:
-                raise FileNotFoundError(f"No file: {filename}")
+        def load_from_txt(file_path):
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Missing file: {file_path}")
             
             data = []
-            with open(file_full_path, 'r', encoding='utf-8') as f:
+            with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
                     if line.startswith('###') or not line: continue
@@ -113,26 +90,26 @@ def get_data(dataset_name='gtsrb', tokenizer=None, max_len=128, repo_id="JONESMI
                             data.append({"text": text_content.lower(), "labels": label_map[label_str]})
             return pd.DataFrame(data)
 
-     
-        train_df = load_from_txt('train.txt')
-        test_df = load_from_txt('test.txt')
+    
+        train_df = load_from_txt(os.path.join(pubmed_dir, 'train.txt'))
+        test_df = load_from_txt(os.path.join(pubmed_dir, 'test.txt'))
+        
         train_raw = HFDataset.from_pandas(train_df)
         test_raw = HFDataset.from_pandas(test_df)
 
-    
+     
         train_raw = train_raw.shuffle(seed=42).select(range(min(n_train, len(train_raw))))
         test_raw = test_raw.shuffle(seed=42).select(range(min(n_test, len(test_raw))))
 
         def tokenize_fn(examples):
             return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=max_len)
 
-
         num_cores = max(1, multiprocessing.cpu_count() - 1)
         
+        print("[INFO] Tokenizing PubMed dataset...")
         train_ds = train_raw.map(tokenize_fn, batched=True, num_proc=num_cores)
         test_ds = test_raw.map(tokenize_fn, batched=True, num_proc=num_cores)
 
- 
         train_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
         test_ds.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
         
