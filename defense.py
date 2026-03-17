@@ -180,52 +180,32 @@ def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
     if topology_type == "scale_free":
         strategic_score = {}
 
-        # ==========================================
-        # Phase 1: 局部得分计算 (保持你原有的优秀逻辑)
-        # ==========================================
         for node in G.nodes():
-            # 1. 构建 2-hop 局部子图 (模拟 Gossip 获取的邻接表)
             ego_G = nx.ego_graph(G, node, radius=2)
 
-            # 2. 局部介数中心性
             ego_bc = nx.betweenness_centrality(ego_G, normalized=True)
             local_betweenness = ego_bc[node]
 
-            # 3. 局部相对度中心性
             local_degrees = dict(ego_G.degree())
             local_max_deg = max(local_degrees.values()) if local_degrees else 1
             local_degree_centrality = local_degrees[node] / local_max_deg
 
-            # 4. 融合得分
             strategic_score[node] = 0.7 * local_betweenness + 0.3 * local_degree_centrality
 
-        # ==========================================
-        # Phase 2: 覆盖率感知的分布式自选举模拟
-        # ==========================================
-        # 按分数从高到低排序作为候选池
         sorted_candidates = sorted(strategic_score.items(), key=lambda x: x[1], reverse=True)
         
         defense_nodes = []
-        covered_nodes = set() # 记录已经被防御节点 1-hop 覆盖的节点集合
+        covered_nodes = set()
         
-        # 核心逻辑：优先选择能覆盖到“盲区”的高分节点
         for node, score in sorted_candidates:
             if len(defense_nodes) >= num_defense_nodes:
                 break
                 
-            # 计算该节点的 1-hop 覆盖范围 (包含它自己和它的邻居)
             node_reach = set(G.neighbors(node)) | {node}
             
-            # 如果该节点能覆盖到至少一个【尚未被保护】的节点 (边际收益 > 0)
             if not node_reach.issubset(covered_nodes):
                 defense_nodes.append(node)
                 covered_nodes.update(node_reach)
-                
-        # ==========================================
-        # Phase 3: 兜底逻辑 (Backfill)
-        # ==========================================
-        # 极端情况：如果网络较小或预算极高，已经实现了 100% 覆盖但名额还没用完。
-        # 此时不再考虑覆盖率，直接按分数高低把剩余名额分发出去，增加核心区的防御冗余度。
         if len(defense_nodes) < num_defense_nodes:
             for node, score in sorted_candidates:
                 if len(defense_nodes) >= num_defense_nodes:
@@ -235,10 +215,6 @@ def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
                     
         return defense_nodes
 
-    # ==========================================
-    # 下方保持你原有的 grid 和 random_regular 逻辑不变
-    # （原有的逻辑已经较好地符合了去中心化的思想）
-    # ==========================================
     elif topology_type == "grid" or topology_type == "lattice":
         grid_size = int(np.sqrt(n))
         pos = {i: (i // grid_size, i % grid_size) for i in range(n)}
@@ -279,10 +255,6 @@ def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
 
         return defense_nodes[:num_defense_nodes]
 
-    # ==========================================
-    # 下方保持你原有的 grid 和 random_regular 逻辑不变
-    # （原有的逻辑已经较好地符合了去中心化的思想）
-    # ==========================================
     elif topology_type == "grid" or topology_type == "lattice":
         grid_size = int(np.sqrt(n))
         pos = {i: (i // grid_size, i % grid_size) for i in range(n)}
