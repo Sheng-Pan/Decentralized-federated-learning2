@@ -169,44 +169,62 @@ def count_minimum_required_defenders(G):
         defenders.append(best_node)
         
     return len(defenders)
+
+
 def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
     n = G.number_of_nodes()
-    
+
     if num_defense_nodes >= n:
         return list(G.nodes())
 
     if topology_type == "scale_free":
-        betweenness = nx.betweenness_centrality(G, k=min(200, n))
-        
-        degrees = dict(G.degree())
-        max_deg = max(degrees.values()) if degrees else 1
-        degree_centrality = {node: deg / max_deg for node, deg in degrees.items()}
-        
         strategic_score = {}
+
+        # 遍历每个节点，模拟纯局部的信息交换和计算
         for node in G.nodes():
-            strategic_score[node] = 0.7 * betweenness.get(node, 0) + 0.3 * degree_centrality.get(node, 0)
-            
+            # 1. 通过 2-hop 邻居信息构建局部子图 (Ego-Network)
+            # 这模拟了 Gossip 协议下节点仅获取 2-hop 邻接表
+            ego_G = nx.ego_graph(G, node, radius=2)
+
+            # 2. 仅在局部子图内计算介数中心性
+            # 注意：实际分布式系统中由节点自身计算，此处为单机模拟
+            ego_bc = nx.betweenness_centrality(ego_G, normalized=True)
+            local_betweenness = ego_bc[node]
+
+            # 3. 计算局部度中心性
+            # 节点只知道自己局部子图内的最大度数，而非全网最大度数
+            local_degrees = dict(ego_G.degree())
+            local_max_deg = max(local_degrees.values()) if local_degrees else 1
+            local_degree_centrality = local_degrees[node] / local_max_deg
+
+            # 4. 融合局部得分
+            strategic_score[node] = 0.7 * local_betweenness + 0.3 * local_degree_centrality
+
+        # 模拟基于局部得分的分布式 Top-K 自我选举
         sorted_nodes = sorted(strategic_score.items(), key=lambda x: x[1], reverse=True)
         return [node for node, _ in sorted_nodes[:num_defense_nodes]]
-    
 
+    # ==========================================
+    # 下方保持你原有的 grid 和 random_regular 逻辑不变
+    # （原有的逻辑已经较好地符合了去中心化的思想）
+    # ==========================================
     elif topology_type == "grid" or topology_type == "lattice":
         grid_size = int(np.sqrt(n))
         pos = {i: (i // grid_size, i % grid_size) for i in range(n)}
-        
+
         num_regions = int(np.ceil(np.sqrt(num_defense_nodes)))
         region_size = max(1, grid_size // num_regions)
-        
+
         defense_nodes = []
         selected_positions = set()
-        
+
         for i in range(num_regions):
             for j in range(num_regions):
                 if len(defense_nodes) >= num_defense_nodes: break
-                
+
                 x_center = i * region_size + region_size // 2
                 y_center = j * region_size + region_size // 2
-                
+
                 best_node = None
                 min_dist = float('inf')
                 for node in range(n):
@@ -216,24 +234,25 @@ def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
                     if dist < min_dist:
                         min_dist = dist
                         best_node = node
-                
+
                 if best_node is not None and best_node not in defense_nodes:
                     defense_nodes.append(best_node)
                     selected_positions.add(best_node)
-        
+
         while len(defense_nodes) < num_defense_nodes:
             remaining_nodes = [i for i in range(n) if i not in defense_nodes]
             if not remaining_nodes: break
             new_node = np.random.choice(remaining_nodes)
             defense_nodes.append(new_node)
             selected_positions.add(new_node)
-        
+
         return defense_nodes[:num_defense_nodes]
+
     elif topology_type == "random_regular":
         defense_nodes = []
-        covered_nodes = set() 
+        covered_nodes = set()
         all_nodes = set(G.nodes())
-        
+
         while len(defense_nodes) < num_defense_nodes:
             if len(covered_nodes) == n:
                 remaining_candidates = list(all_nodes - set(defense_nodes))
@@ -242,27 +261,27 @@ def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
                 else:
                     break
                 continue
-                
+
             best_node = None
             max_new_coverage = -1
-            
+
             for candidate in all_nodes - set(defense_nodes):
                 candidate_coverage = set(G.neighbors(candidate))
                 candidate_coverage.add(candidate)
-                
+
                 new_coverage = len(candidate_coverage - covered_nodes)
-                
+
                 if new_coverage > max_new_coverage:
                     max_new_coverage = new_coverage
                     best_node = candidate
-                    
+
             if best_node is not None:
                 defense_nodes.append(best_node)
                 covered_nodes.update(G.neighbors(best_node))
                 covered_nodes.add(best_node)
             else:
                 break
-                
+
         return defense_nodes[:num_defense_nodes]
 
     else:
