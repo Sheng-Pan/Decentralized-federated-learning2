@@ -180,29 +180,104 @@ def get_high_value_defense_nodes(G, num_defense_nodes, topology_type="unknown"):
     if topology_type == "scale_free":
         strategic_score = {}
 
-        # 遍历每个节点，模拟纯局部的信息交换和计算
+        # ==========================================
+        # Phase 1: 局部得分计算 (保持你原有的优秀逻辑)
+        # ==========================================
         for node in G.nodes():
-            # 1. 通过 2-hop 邻居信息构建局部子图 (Ego-Network)
-            # 这模拟了 Gossip 协议下节点仅获取 2-hop 邻接表
+            # 1. 构建 2-hop 局部子图 (模拟 Gossip 获取的邻接表)
             ego_G = nx.ego_graph(G, node, radius=2)
 
-            # 2. 仅在局部子图内计算介数中心性
-            # 注意：实际分布式系统中由节点自身计算，此处为单机模拟
+            # 2. 局部介数中心性
             ego_bc = nx.betweenness_centrality(ego_G, normalized=True)
             local_betweenness = ego_bc[node]
 
-            # 3. 计算局部度中心性
-            # 节点只知道自己局部子图内的最大度数，而非全网最大度数
+            # 3. 局部相对度中心性
             local_degrees = dict(ego_G.degree())
             local_max_deg = max(local_degrees.values()) if local_degrees else 1
             local_degree_centrality = local_degrees[node] / local_max_deg
 
-            # 4. 融合局部得分
+            # 4. 融合得分
             strategic_score[node] = 0.7 * local_betweenness + 0.3 * local_degree_centrality
 
-        # 模拟基于局部得分的分布式 Top-K 自我选举
-        sorted_nodes = sorted(strategic_score.items(), key=lambda x: x[1], reverse=True)
-        return [node for node, _ in sorted_nodes[:num_defense_nodes]]
+        # ==========================================
+        # Phase 2: 覆盖率感知的分布式自选举模拟
+        # ==========================================
+        # 按分数从高到低排序作为候选池
+        sorted_candidates = sorted(strategic_score.items(), key=lambda x: x[1], reverse=True)
+        
+        defense_nodes = []
+        covered_nodes = set() # 记录已经被防御节点 1-hop 覆盖的节点集合
+        
+        # 核心逻辑：优先选择能覆盖到“盲区”的高分节点
+        for node, score in sorted_candidates:
+            if len(defense_nodes) >= num_defense_nodes:
+                break
+                
+            # 计算该节点的 1-hop 覆盖范围 (包含它自己和它的邻居)
+            node_reach = set(G.neighbors(node)) | {node}
+            
+            # 如果该节点能覆盖到至少一个【尚未被保护】的节点 (边际收益 > 0)
+            if not node_reach.issubset(covered_nodes):
+                defense_nodes.append(node)
+                covered_nodes.update(node_reach)
+                
+        # ==========================================
+        # Phase 3: 兜底逻辑 (Backfill)
+        # ==========================================
+        # 极端情况：如果网络较小或预算极高，已经实现了 100% 覆盖但名额还没用完。
+        # 此时不再考虑覆盖率，直接按分数高低把剩余名额分发出去，增加核心区的防御冗余度。
+        if len(defense_nodes) < num_defense_nodes:
+            for node, score in sorted_candidates:
+                if len(defense_nodes) >= num_defense_nodes:
+                    break
+                if node not in defense_nodes:
+                    defense_nodes.append(node)
+                    
+        return defense_nodes
+
+    # ==========================================
+    # 下方保持你原有的 grid 和 random_regular 逻辑不变
+    # （原有的逻辑已经较好地符合了去中心化的思想）
+    # ==========================================
+    elif topology_type == "grid" or topology_type == "lattice":
+        grid_size = int(np.sqrt(n))
+        pos = {i: (i // grid_size, i % grid_size) for i in range(n)}
+
+        num_regions = int(np.ceil(np.sqrt(num_defense_nodes)))
+        region_size = max(1, grid_size // num_regions)
+
+        defense_nodes = []
+        selected_positions = set()
+
+        for i in range(num_regions):
+            for j in range(num_regions):
+                if len(defense_nodes) >= num_defense_nodes: break
+
+                x_center = i * region_size + region_size // 2
+                y_center = j * region_size + region_size // 2
+
+                best_node = None
+                min_dist = float('inf')
+                for node in range(n):
+                    if node in selected_positions: continue
+                    x, y = pos[node]
+                    dist = (x - x_center)**2 + (y - y_center)**2
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_node = node
+
+                if best_node is not None and best_node not in defense_nodes:
+                    defense_nodes.append(best_node)
+                    selected_positions.add(best_node)
+
+        while len(defense_nodes) < num_defense_nodes:
+            remaining_nodes = [i for i in range(n) if i not in defense_nodes]
+            if not remaining_nodes: break
+            new_node = np.random.choice(remaining_nodes)
+            defense_nodes.append(new_node)
+            selected_positions.add(new_node)
+
+        return defense_nodes[:num_defense_nodes]
 
     # ==========================================
     # 下方保持你原有的 grid 和 random_regular 逻辑不变
