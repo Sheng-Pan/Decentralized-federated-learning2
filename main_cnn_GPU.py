@@ -304,12 +304,7 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
 
                 selected_neighbors, agg_w = mab_defense.select_for_aggregation(client_id=i, candidates=audit_targets)
                 
-                # ==========================================
-                # 平均聚合 (包含自身与选中的邻居)
-                # ==========================================
                 avg_state = {}
-                
-                # 确定所有参与聚合的节点：自身 + 被选中的邻居
                 participating_nodes = [i]
                 if selected_neighbors:
                     participating_nodes.extend(selected_neighbors)
@@ -317,19 +312,15 @@ def run_simulation_CNN_GPU(seed, NUM_CLIENTS, defense_nodes, malicious_clients, 
                 num_participants = len(participating_nodes)
 
                 for k in post_states[i].keys():
-                    # 跳过非浮点参数（如 BatchNorm 的 tracked batches）
                     if 'num_batches_tracked' in k:
                         avg_state[k] = post_states[i][k].clone()
                         continue
                         
-                    # 初始化全 0 张量
                     tmp_sum = torch.zeros_like(post_states[i][k].float())
 
-                    # 累加所有参与节点的权重
                     for nid in participating_nodes:
                         tmp_sum += post_states[nid][k].float()
 
-                    # 求平均并转换回原数据类型
                     avg_state[k] = (tmp_sum / num_participants).to(post_states[i][k].dtype)
 
                 next_round_weights.append(avg_state)

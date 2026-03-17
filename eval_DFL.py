@@ -41,7 +41,7 @@ def evaluate_global_transformer(active_model, current_weights_cpu, test_data, de
             # A. Clean Accuracy
             out = active_model(input_ids=input_ids, attention_mask=mask)
             preds = torch.argmax(out.logits, dim=-1)
-            clean_correct += (preds == labels).sum() # 直接在 GPU 累加
+            clean_correct += (preds == labels).sum() 
             total_clean += labels.size(0)
 
             # B. ASR Evaluation
@@ -111,7 +111,7 @@ def evaluate_global_cnn(model, test_loader, device, trigger_type='patch', intens
                 attack_total += mask.sum()
                 attack_success += (poi_preds == 7).sum()
 
-# ... 后面的代码保持不变 ...
+
                 
 
     acc = 100.0 * (correct.float() / total).item()

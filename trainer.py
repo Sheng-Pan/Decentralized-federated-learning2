@@ -29,10 +29,7 @@ def train_client_transformer(active_model, client_dataset, device,
                              reference_norm=None, 
                              reference_vector=None, lr=5e-5, current_round=0,goodnorm=2,
                              norm_factor=40.0):
-    """
-    针对 L4 GPU 优化的 Transformer 客户端训练函数
-    包含：BF16 加速、内存隔离、以及 Neurotoxin 掩码逃逸攻击
-    """
+ 
     
  
     start_params_cpu = {k: v.clone().detach().cpu() for k, v in global_weights_cpu.items()}

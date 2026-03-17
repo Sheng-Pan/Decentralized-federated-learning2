@@ -147,7 +147,7 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
         else:
             real_probe_inputs = real_probe_batch.to(device)
 
-        # 限制大小防止 OOM
+  
         real_probe_inputs = real_probe_inputs[:16] 
         print(f"✅ Probe successfully extracted, shape: {real_probe_inputs.shape}")
         
@@ -243,12 +243,12 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
             delta_w_list = []
             for k in standard_keys: 
                 if 'num_batches_tracked' in k: continue
-                # 确保只处理 float 类型的权重
+          
                 
                 w_new = new_weights_cpu[cid][k].float()
                 w_old = client_weights_cpu[cid][k].float()
                 
-                # 展平并添加
+          
                 delta_w_list.append((w_new - w_old).flatten())
             
             if delta_w_list:
@@ -318,7 +318,7 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
                     # --- Step 2: Update Trust (Phase 2) ---
                     audit_logs = {}
 
-                    # 只有当有审计目标时才进行更新
+              
                     if audit_targets:
                         audit_logs = mab_defense.update_trust(
                             observer_id=i,
@@ -401,7 +401,7 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
                             avg_w[k] = new_weights_cpu[i][k].clone()
                             continue
 
-                        # 初始化一个零张量
+             
                         tmp_sum = torch.zeros_like(new_weights_cpu[i][k].float())
                         for nid in winner_ids:
                             tmp_sum += new_weights_cpu[nid][k].float()
@@ -460,12 +460,12 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
                             tmp_sum = torch.zeros_like(new_weights_cpu[i][k].float())
                             
                             for nid in final_group:
-                                # 1. Calculate delta ON THE FLY layer-by-layer (Saves ~2.5GB RAM)
+                                # 1. Calculate delta ON THE FLY layer-by-layer
                                 w_new = new_weights_cpu[nid][k].float()
                                 w_old = client_weights_cpu[nid][k].float().to(w_new.device)
                                 update_v = w_new - w_old
                                 
-                                # 2. Lookup pre-calculated norm (Saves immense CPU time)
+                                # 2. Lookup pre-calculated norm 
                                 current_node_norm = norm_dict[nid]
                                 
                                 # 🌟 L2 Clipping
@@ -526,7 +526,7 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
                             linkage='average'
                         )
                         cluster_labels = clusterer.fit_predict(dist_matrix)
-                    # 4. 识别良性簇 (Trusted Cluster)
+                
                     my_idx = candidates.index(i)
                     my_cluster = cluster_labels[my_idx]
                     
@@ -716,7 +716,7 @@ def run_simulation_transformer(seed, NUM_CLIENTS, defense_nodes, malicious_clien
                             avg_state[k] = new_weights_cpu[i][k].clone()
                             continue
 
-                        # 累加逻辑
+                
                         tmp_sum = torch.zeros_like(new_weights_cpu[candidates[0]][k].float())
                         for nid in candidates:
                             tmp_sum += new_weights_cpu[nid][k].float()
